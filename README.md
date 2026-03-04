@@ -1,6 +1,6 @@
 # BE-TEMPLATE
 
-A production-ready Express.js backend template written in TypeScript, featuring Prisma ORM, WebSocket support, Redis caching, Swagger API docs, Sentry error tracking, and OpenTelemetry observability..
+A production-ready Express.js backend template written in TypeScript, featuring Prisma ORM, WebSocket support, Redis caching, Swagger API docs, Sentry error tracking, and OpenTelemetry observability.
 
 ## Tech Stack
 
