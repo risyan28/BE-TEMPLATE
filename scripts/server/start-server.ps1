@@ -110,7 +110,7 @@ if (-not $portFree) {
 # Ensure dist folder exists
 if (-not (Test-Path $ENTRY_POINT)) {
     Write-Host "`nERROR: Build output not found at '$ENTRY_POINT'" -ForegroundColor Red
-    Write-Host "Please run 'npm run build' first." -ForegroundColor Yellow
+    Write-Host "Please run 'pnpm run build' first." -ForegroundColor Yellow
     exit 1
 }
 

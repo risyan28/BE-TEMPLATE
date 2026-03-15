@@ -44,7 +44,7 @@ Write-Host "`n[2/2] Starting server..." -ForegroundColor Yellow
 # Check if we should run in development or production mode
 if ($args -contains "--dev" -or $args -contains "-d") {
     Write-Host "  Starting in DEVELOPMENT mode..." -ForegroundColor Cyan
-    npm run dev
+    pnpm run dev
 } else {
     Write-Host "  Starting in PRODUCTION mode..." -ForegroundColor Cyan
     node dist/index.js

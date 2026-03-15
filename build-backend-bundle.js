@@ -7,6 +7,7 @@ const os = require('os')
 const ROOT = process.cwd()
 const DIST = path.join(ROOT, 'dist')
 const PACKAGE_JSON = path.join(ROOT, 'package.json')
+const PNPM_LOCK = path.join(ROOT, 'pnpm-lock.yaml')
 const PRISMA_DIR = path.join(ROOT, 'prisma')
 const ENV_FILE = path.join(ROOT, '.env') // Ganti ke .env.production jika kamu punya
 const TARGET = path.join(ROOT, 'backend-runtime') // Nama folder output
@@ -47,7 +48,7 @@ console.log('📦 Starting Backend Runtime Bundle Creation...\n')
 try {
   // 1. Pastikan dist/ dan prisma/ siap
   console.log('🔍 Step 1: Ensuring build artifacts are up-to-date...')
-  run('npm run build') // Jalankan build
+  run('pnpm run build') // Jalankan build
 
   // 2. Bersihkan folder target lama jika ada
   console.log('\n🧹 Step 2: Cleaning up previous build...')
@@ -58,7 +59,7 @@ try {
   fs.mkdirSync(TARGET, { recursive: true })
   console.log(`   Created fresh ${TARGET}`)
 
-  // 3. Copy dist/, prisma/, package.json, .env
+  // 3. Copy dist/, prisma/, package.json, lockfile, .env
   console.log('\n📂 Step 3: Copying necessary files...')
 
   console.log('   - Copying dist/')
@@ -74,6 +75,15 @@ try {
   console.log('   - Copying package.json')
   fs.copyFileSync(PACKAGE_JSON, path.join(TARGET, 'package.json'))
 
+  if (fs.existsSync(PNPM_LOCK)) {
+    console.log('   - Copying pnpm-lock.yaml')
+    fs.copyFileSync(PNPM_LOCK, path.join(TARGET, 'pnpm-lock.yaml'))
+  } else {
+    console.warn(
+      '   ⚠️ pnpm-lock.yaml not found, install may be non-deterministic.',
+    )
+  }
+
   if (fs.existsSync(ENV_FILE)) {
     console.log('   - Copying .env')
     fs.copyFileSync(ENV_FILE, path.join(TARGET, '.env'))
@@ -87,7 +97,7 @@ try {
   console.log(
     '\n📦 Step 4: Installing production dependencies in runtime folder...',
   )
-  run('npm install --omit=dev', TARGET) // Install di dalam folder target
+  run('npx -y pnpm@10.32.1 install --prod --frozen-lockfile', TARGET) // Install di dalam folder target
   run('npx prisma generate', TARGET) // Generate Prisma Client di dalam folder target
 
   // 5. Create deployment guide

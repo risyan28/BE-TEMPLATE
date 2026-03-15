@@ -75,7 +75,7 @@ const startServer = (retries = 3, delay = 2000) => {
     } else if (err.code === 'EADDRINUSE') {
       loggers.server.fatal(
         { port: PORT },
-        'Port still in use after retries. Please run: npm run stop',
+        'Port still in use after retries. Please run: pnpm run stop',
       )
       process.exit(1)
     } else {

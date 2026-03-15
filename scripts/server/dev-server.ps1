@@ -119,4 +119,4 @@ Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
 # Run dev mode (TypeScript watch + nodemon)
-npx concurrently "tsc --watch" "nodemon"
+pnpm exec concurrently "tsc --watch" "nodemon"

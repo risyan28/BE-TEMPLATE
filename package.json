@@ -1,11 +1,15 @@
 {
   "name": "be-template",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
   "version": "1.0.0",
   "description": "",
   "main": "dist/index.js",
   "scripts": {
+    "postinstall": "pnpm run generate",
     "dev": "scripts\\server\\dev-server.cmd",
     "dev:direct": "concurrently \"tsc --watch\" \"nodemon\"",
+    "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "scripts\\server\\start-server.cmd",
     "start:direct": "node dist/index.js",
@@ -22,9 +26,12 @@
     "docs:generate": "node scripts\\docs\\generate-docs.js",
     "docs:pdf": "powershell -ExecutionPolicy Bypass -File scripts\\docs\\generate-pdf.ps1",
     "docs:docx": "powershell -ExecutionPolicy Bypass -File scripts\\docs\\generate-docx.ps1",
-    "docs:all": "npm run docs:generate && npm run docs:pdf",
-    "git:solo": "git add . && git diff --cached --quiet || git commit -m \"Update project\" && git pull origin main --no-rebase && git push origin main",
-    "git:team": "git add . && git diff --cached --quiet || git commit -m \"Update project\" && git pull origin main --no-rebase && git push origin $(git branch --show-current)",
+    "docs:all": "pnpm run docs:generate && pnpm run docs:pdf",
+    "check:conflicts": "node .\\scripts\\check-conflict-markers.mjs",
+    "check:conflicts:all": "node .\\scripts\\check-conflict-markers.mjs --all",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "git:solo": "node scripts/git-solo.mjs",
+    "git:team": "node scripts/git-team.mjs",
     "git:new": "git checkout -b"
   },
   "_moduleAliases": {

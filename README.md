@@ -2,6 +2,14 @@
 
 A production-ready Express.js backend template written in TypeScript, featuring Prisma ORM, WebSocket support, Redis caching, Swagger API docs, Sentry error tracking, and OpenTelemetry observability.
 
+## Package Manager Standard
+
+Project ini menggunakan `pnpm` sebagai standar utama.
+
+- `packageManager` sudah dipin di `package.json`.
+- Lockfile utama: `pnpm-lock.yaml`.
+- Untuk konsistensi tim/CI/VPS, gunakan pnpm di semua environment.
+
 ## Tech Stack
 
 - **Runtime**: Node.js + TypeScript
@@ -48,8 +56,16 @@ src/
 ### Installation
 
 ```bash
-npm install
+pnpm install
 ```
+
+Jika command `pnpm` belum tersedia (Windows non-admin), gunakan fallback:
+
+```bash
+npx -y pnpm@10.32.1 install
+```
+
+Setelah install, script `postinstall` otomatis menjalankan Prisma client generation.
 
 ### Environment Variables
 
@@ -67,45 +83,48 @@ OTEL_EXPORTER_OTLP_ENDPOINT=
 
 ```bash
 # Run migrations
-npm run migrate
+pnpm run migrate
 
 # Deploy migrations (production)
-npm run migrate:deploy
+pnpm run migrate:deploy
 
 # Generate Prisma client
-npm run generate
+pnpm run generate
 
 # Seed database
-npm run seed
+pnpm run seed
 
 # Open Prisma Studio
-npm run studio
+pnpm run studio
 ```
 
 ## Development
 
 ```bash
 # Start dev server (with file watching)
-npm run dev
+pnpm run dev
 
 # Start dev server directly (without helper scripts)
-npm run dev:direct
+pnpm run dev:direct
+
+# Type check
+pnpm run typecheck
 ```
 
 ## Production
 
 ```bash
 # Build TypeScript
-npm run build
+pnpm run build
 
 # Start server
-npm run start
+pnpm run start
 
 # Stop server
-npm run stop
+pnpm run stop
 
 # Restart server
-npm run restart
+pnpm run restart
 ```
 
 ## API Documentation
@@ -114,46 +133,64 @@ Swagger UI is available at `http://localhost:<PORT>/api-docs` when the server is
 
 ```bash
 # Generate docs files
-npm run docs:generate
+pnpm run docs:generate
 
 # Generate PDF docs
-npm run docs:pdf
+pnpm run docs:pdf
 
 # Generate DOCX docs
-npm run docs:docx
+pnpm run docs:docx
 
 # Generate all docs
-npm run docs:all
+pnpm run docs:all
 ```
 
 ## Scripts
 
-| Script                   | Description                              |
-| ------------------------ | ---------------------------------------- |
-| `npm run dev`            | Start development server with hot reload |
-| `npm run build`          | Compile TypeScript to `dist/`            |
-| `npm run start`          | Start production server                  |
-| `npm run stop`           | Stop the running server                  |
-| `npm run restart`        | Restart the server                       |
-| `npm run migrate`        | Run Prisma migrations (dev)              |
-| `npm run migrate:deploy` | Run Prisma migrations (production)       |
-| `npm run generate`       | Generate Prisma client                   |
-| `npm run seed`           | Seed the database                        |
-| `npm run studio`         | Open Prisma Studio                       |
-| `npm run bundle:be`      | Bundle backend for distribution          |
-| `npm run docs:generate`  | Generate API documentation               |
+| Script                    | Description                              |
+| ------------------------- | ---------------------------------------- |
+| `pnpm run dev`            | Start development server with hot reload |
+| `pnpm run build`          | Compile TypeScript to `dist/`            |
+| `pnpm run start`          | Start production server                  |
+| `pnpm run stop`           | Stop the running server                  |
+| `pnpm run restart`        | Restart the server                       |
+| `pnpm run migrate`        | Run Prisma migrations (dev)              |
+| `pnpm run migrate:deploy` | Run Prisma migrations (production)       |
+| `pnpm run generate`       | Generate Prisma client                   |
+| `pnpm run seed`           | Seed the database                        |
+| `pnpm run studio`         | Open Prisma Studio                       |
+| `pnpm run bundle:be`      | Bundle backend for distribution          |
+| `pnpm run docs:generate`  | Generate API documentation               |
+
+## Hardening Stage 2
+
+Template ini sudah dilengkapi baseline quality guard:
+
+- Pre-commit guard conflict marker via `.githooks/pre-commit`.
+- Script checker conflict marker di `scripts/check-conflict-markers.mjs`.
+- CI minimum di `.github/workflows/ci.yml` untuk:
+  - install (`pnpm install --frozen-lockfile`)
+  - conflict check (`pnpm run check:conflicts:all`)
+  - typecheck (`pnpm run typecheck`)
+  - build (`pnpm run build`)
+
+Aktifkan hooks sekali per clone:
+
+```bash
+pnpm run hooks:install
+```
 
 ## Git Shortcuts
 
 ```bash
 # Solo workflow (push to main)
-npm run git:solo
+pnpm run git:solo
 
 # Team workflow (push to current branch)
-npm run git:team
+pnpm run git:team
 
 # Create new branch
-npm run git:new <branch-name>
+pnpm run git:new <branch-name>
 ```
 
 ## License
