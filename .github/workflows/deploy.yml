@@ -1,0 +1,108 @@
+# Deploy Backend ke Hostinger (hPanel Node.js)
+# ────────────────────────────────────────────────────────────────────────────
+# Secrets yang wajib di-set di GitHub → Settings → Secrets and variables → Actions:
+#
+#   FTP_SERVER      → FTP Hostname dari hPanel (contoh: files.yourdomain.com)
+#   FTP_USERNAME    → FTP Username dari hPanel
+#   FTP_PASSWORD    → FTP Password dari hPanel
+#   FTP_SERVER_DIR  → Folder tujuan di server (contoh: /home/u123456789/backend/)
+#
+# Setelah deploy pertama, buka hPanel → Advanced → Node.js:
+#   • App Root      : folder tujuan di atas
+#   • Entry point   : dist/index.js
+#   • Node.js       : 20
+#   • Klik Start App
+# ────────────────────────────────────────────────────────────────────────────
+
+name: Deploy Backend to Hostinger
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Build & Deploy Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Setup pnpm (versi dari packageManager di package.json) ─
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # ── 3. Setup Node.js 20 (sesuai hPanel) ────────────────────
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      # ── 4. Aktifkan flat node_modules (wajib: FTP tidak bisa upload symlink pnpm) ──
+      - name: Enable shamefully-hoist for flat node_modules
+        run: printf "\nshamefully-hoist=true\n" >> .npmrc
+
+      # ── 5. Arahkan Puppeteer cache ke dalam folder project ─────
+      # Default cache (~/.cache/puppeteer) ada di CI runner, TIDAK ter-upload via FTP.
+      # Dengan PUPPETEER_CACHE_DIR=.puppeteer-cache, Chromium disimpan di dalam project
+      # sehingga ikut ter-upload ke Hostinger dan langsung bisa dipakai.
+      # Di hPanel, tambahkan env var PUPPETEER_CACHE_DIR=.puppeteer-cache agar Puppeteer
+      # tahu di mana mencari Chromium saat runtime.
+      - name: Set Puppeteer cache dir to project folder
+        run: echo "PUPPETEER_CACHE_DIR=.puppeteer-cache" >> $GITHUB_ENV
+
+      # ── 6. Install semua dependencies (termasuk devDeps untuk build) ──
+      - name: Install all dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── 7. Compile TypeScript → dist/ ──────────────────────────
+      - name: Compile TypeScript
+        run: pnpm run build
+
+      # ── 8. Generate Prisma Client dengan binary Linux ──────────
+      # schema.prisma sudah include binaryTargets:
+      #   - debian-openssl-3.0.x  → CI runner (Ubuntu)
+      #   - rhel-openssl-3.0.x    → Hostinger (CloudLinux / RHEL)
+      # Keduanya di-generate sekaligus dan di-upload — server otomatis pakai yang sesuai.
+      - name: Generate Prisma Client (Ubuntu + RHEL binary)
+        run: pnpm exec prisma generate
+
+      # ── 9. Hapus devDependencies ────────────────────────────────
+      # node_modules/.prisma/client/ (berisi binary) TIDAK disentuh pnpm prune
+      # karena bukan registered package, hanya direktori generated.
+      - name: Remove devDependencies (keep generated Prisma engine)
+        run: pnpm prune --prod
+
+      # ── 10. Upload ke Hostinger via FTP ────────────────────────
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          # File/folder yang TIDAK perlu diupload ke server:
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/src/**
+            **/.env*
+            **/scripts/**
+            **/doc/**
+            **/uploads/**
+            **/build-backend-bundle.js
+            **/test-sign-file.js
+            **/nodemon.json
+            **/tsconfig*.json
+            **/pnpm-lock.yaml
+            **/*.bat
+            **/*.cmd
+            **/README.md
+            **/.npmrc

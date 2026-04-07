@@ -4,84 +4,89 @@
 $PORT = 4001
 $MAX_RETRIES = 3
 $RETRY_DELAY = 2
+$PROJECT_ROOT = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
 Write-Host "==========================================="
 Write-Host "DEV MODE - SMART STARTER" -ForegroundColor Cyan
 Write-Host "==========================================="
 
+function Wait-UntilPortFree {
+    param([int]$Port)
+
+    for ($i = 0; $i -lt 15; $i++) {
+        $stillInUse = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if (-not $stillInUse) {
+            Write-Host "  Port $Port is now free" -ForegroundColor Green
+            return $true
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    Write-Host "  Warning: Port still in use" -ForegroundColor Red
+    return $false
+}
+
+function Stop-OrphanedBackendProcesses {
+    Write-Host "`nChecking for orphaned backend dev processes..." -ForegroundColor Yellow
+
+    $keywords = @('nodemon', 'tsc --watch', 'dist/index.js', 'concurrently')
+
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $commandLine = $_.CommandLine
+            $_.ProcessId -ne $PID -and
+            $commandLine -and
+            $commandLine.Contains($PROJECT_ROOT) -and
+            (($keywords | Where-Object { $commandLine -like "*$_*" }).Count -gt 0)
+        }
+
+    foreach ($process in $processes) {
+        Write-Host "  Killing orphaned process: $($process.Name) (PID: $($process.ProcessId))" -ForegroundColor Red
+        cmd /c "taskkill /PID $($process.ProcessId) /T /F" | Out-Null
+    }
+}
+
 function Stop-ProcessOnPort {
     param([int]$Port)
-    
+
     Write-Host "`nChecking if port $Port is in use..." -ForegroundColor Yellow
-    
+
     try {
-        # Use netstat for more reliable PID detection
-        $netstatOutput = netstat -ano | Select-String ":$Port\s" | Select-String "LISTENING"
-        
-        if ($netstatOutput) {
-            $killed = $false
-            
-            foreach ($line in $netstatOutput) {
-                # Extract PID from netstat output (last column)
-                if ($line -match '\s+(\d+)\s*$') {
-                    $processId = [int]$matches[1]
-                    
-                    # Skip system processes (PID 0, 4)
-                    if ($processId -eq 0 -or $processId -eq 4) {
-                        Write-Host "  Skipping system process (PID: $processId)" -ForegroundColor Gray
-                        continue
-                    }
-                    
-                    try {
-                        $processInfo = Get-Process -Id $processId -ErrorAction SilentlyContinue
-                        if ($processInfo) {
-                            Write-Host "  Found process: $($processInfo.ProcessName) (PID: $processId)" -ForegroundColor Red
-                            Write-Host "  Killing process..." -ForegroundColor Yellow
-                            Stop-Process -Id $processId -Force -ErrorAction Stop
-                            Write-Host "  Process killed successfully" -ForegroundColor Green
-                            $killed = $true
-                        }
-                    } catch {
-                        Write-Host "  Warning: Could not kill process $processId - $_" -ForegroundColor Yellow
-                    }
-                }
-            }
-            
-            # Wait for port to be released (longer wait after kill)
-            if ($killed) {
-                Write-Host "  Waiting for port to be released..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 2
-            }
-            
-            # Verify port is free using netstat again
-            $stillInUse = netstat -ano | Select-String ":$Port\s" | Select-String "LISTENING"
-            if ($stillInUse) {
-                Write-Host "  Warning: Port still in use" -ForegroundColor Red
-                return $false
-            } else {
-                Write-Host "  Port $Port is now free" -ForegroundColor Green
-                return $true
-            }
-        } else {
+        $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+
+        if (-not $connections) {
             Write-Host "  Port $Port is free" -ForegroundColor Green
             return $true
         }
+
+        $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+
+        foreach ($processId in $processIds) {
+            if ($processId -eq 0 -or $processId -eq 4) {
+                Write-Host "  Skipping system process (PID: $processId)" -ForegroundColor Gray
+                continue
+            }
+
+            $processInfo = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if (-not $processInfo) {
+                continue
+            }
+
+            Write-Host "  Found process: $($processInfo.ProcessName) (PID: $processId)" -ForegroundColor Red
+            Write-Host "  Killing process tree..." -ForegroundColor Yellow
+            cmd /c "taskkill /PID $processId /T /F" | Out-Null
+        }
+
+        Write-Host "  Waiting for port to be released..." -ForegroundColor Yellow
+        return Wait-UntilPortFree -Port $Port
     } catch {
         Write-Host "  Error checking port: $_" -ForegroundColor Red
-        
-        # Fallback: try one more time with longer wait
-        Write-Host "  Retrying with extended wait..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 3
-        
-        $check = netstat -ano | Select-String ":$Port\s" | Select-String "LISTENING"
-        if (-not $check) {
-            Write-Host "  Port is now free after extended wait" -ForegroundColor Green
-            return $true
-        }
-        
         return $false
     }
 }
+
+Stop-OrphanedBackendProcesses
 
 # Try to free the port
 $attempt = 1
@@ -119,4 +124,4 @@ Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
 # Run dev mode (TypeScript watch + nodemon)
-pnpm exec concurrently "tsc --watch" "nodemon"
+pnpm exec concurrently --kill-others-on-fail "tsc --watch" "nodemon"

@@ -1,17 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2022",              // ✅
-    "module": "node16",              // ✅ ganti dari "commonjs"
-    "moduleResolution": "node16",    // ✅ ganti dari "bundler"
+    "target": "ES2022", // ✅
+    "module": "node16", // ✅ ganti dari "commonjs"
+    "moduleResolution": "node16", // ✅ ganti dari "bundler"
     "rootDir": "src",
     "outDir": "dist",
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": "./src",
     "paths": {
-      "@/*": ["*"]
+      "@/*": ["./src/*"]
     },
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true

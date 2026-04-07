@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `tb_m_push_subscription` ALTER COLUMN `updatedAt` DROP DEFAULT;

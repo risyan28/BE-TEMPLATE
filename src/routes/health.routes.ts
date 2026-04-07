@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { asyncHandler } from '@/middleware/errorHandler'
 import prisma from '@/prisma'
-import { getConnection } from '@/utils/db'
 
 const router = Router()
 
@@ -100,37 +99,17 @@ router.get(
       prismaStatus = 'unhealthy'
     }
 
-    // Check MSSQL connection pool
-    let mssqlStatus = 'unknown'
-    let mssqlResponseTime = 0
-    try {
-      const mssqlStart = Date.now()
-      const pool = await getConnection()
-      await pool.request().query('SELECT 1')
-      mssqlResponseTime = Date.now() - mssqlStart
-      mssqlStatus = 'healthy'
-    } catch (err) {
-      mssqlStatus = 'unhealthy'
-    }
-
     const totalTime = Date.now() - startTime
     const memoryUsage = process.memoryUsage()
 
     res.json({
-      status:
-        prismaStatus === 'healthy' && mssqlStatus === 'healthy'
-          ? 'healthy'
-          : 'degraded',
+      status: prismaStatus === 'healthy' ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
       uptime: Math.floor(process.uptime()),
       checks: {
         prisma: {
           status: prismaStatus,
           responseTime: `${prismaResponseTime}ms`,
-        },
-        mssql: {
-          status: mssqlStatus,
-          responseTime: `${mssqlResponseTime}ms`,
         },
       },
       system: {

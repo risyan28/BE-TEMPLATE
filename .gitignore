@@ -5,6 +5,10 @@ node_modules/
 dist/
 build/
 
+# Puppeteer Chromium cache — diabaikan oleh git tapi HARUS ter-upload via FTP
+# (GitHub Actions mendownload ke sini lalu FTP-Deploy meng-uploadnya ke server)
+.puppeteer-cache/
+
 #Runtime
 backend-runtime/
 

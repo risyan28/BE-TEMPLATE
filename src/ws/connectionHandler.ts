@@ -9,11 +9,11 @@ let io: Server | null = null
 const activePollings = new Map<string, { stop: () => void }>()
 
 // Mapping topik ke konfigurasi
-const topicConfig = new Map<string, { eventName: string; pollingModule: any }>()
+const topicConfig = new Map<string, { eventName: string; pollingModule: any; requiresMSSQL: boolean }>()
 
 export function initConnectionHandler(
   server: any,
-  pollings: { name: string; module: any; eventName: string }[],
+  pollings: { name: string; module: any; eventName: string; requiresMSSQL?: boolean }[],
 ) {
   // ✅ CORS Configuration with whitelist for WebSocket
   const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -26,12 +26,12 @@ export function initConnectionHandler(
       credentials: true,
       maxAge: CORS_DEFAULTS.MAX_AGE,
     },
-    transports: ['websocket'],
+    transports: ['polling', 'websocket'],
   })
 
   // Daftarkan konfigurasi per topik
-  for (const { name, module, eventName } of pollings) {
-    topicConfig.set(name, { eventName, pollingModule: module })
+  for (const { name, module, eventName, requiresMSSQL } of pollings) {
+    topicConfig.set(name, { eventName, pollingModule: module, requiresMSSQL: requiresMSSQL ?? false })
   }
 
   io.on('connection', async (socket: Socket) => {
@@ -75,9 +75,15 @@ export function initConnectionHandler(
 
       // Kirim snapshot TERBARU ke client yang baru subscribe
       try {
-        const snapshot = await config.pollingModule.pollingLogic(
-          await getConnection(),
-        )
+        let pool: any = null
+        if (config.requiresMSSQL) {
+          try {
+            pool = await getConnection()
+          } catch {
+            // MSSQL unavailable
+          }
+        }
+        const snapshot = await config.pollingModule.pollingLogic(pool)
         socket.emit(config.eventName, snapshot)
         console.log(
           `📤 Sent initial snapshot to ${socket.id} for topic: ${topic}`,
@@ -103,9 +109,15 @@ export function initConnectionHandler(
       }
 
       try {
-        const snapshot = await config.pollingModule.pollingLogic(
-          await getConnection(),
-        )
+        let pool: any = null
+        if (config.requiresMSSQL) {
+          try {
+            pool = await getConnection()
+          } catch {
+            // MSSQL unavailable
+          }
+        }
+        const snapshot = await config.pollingModule.pollingLogic(pool)
         socket.emit(config.eventName, snapshot)
         console.log(`🔄 Manual sync sent to ${socket.id} for topic: ${topic}`)
       } catch (err: any) {
@@ -120,7 +132,13 @@ export function initConnectionHandler(
       }
     })
 
-    // 📤 Unsubscribe
+    // � Join user-specific room untuk badge update via Socket.IO
+    // Frontend memanggil: socket.emit('join', `user:${userId}`)
+    socket.on('join', (room: string) => {
+      socket.join(room)
+    })
+
+    // �📤 Unsubscribe
     socket.on('unsubscribe', (topic: string) => {
       socket.leave(topic)
       console.log(`📤 Client ${socket.id} unsubscribed from: ${topic}`)
@@ -135,8 +153,9 @@ export function initConnectionHandler(
       }
     })
 
-    socket.on('disconnect', () => {
-      console.log(`❌ Client disconnected: ${socket.id}`)
+    socket.on('disconnect', (reason) => {
+      // Normal on mobile — browser suspends WS when app goes to background
+      console.log(`👋 Client disconnected: ${socket.id} (${reason})`)
     })
   })
 

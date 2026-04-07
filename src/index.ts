@@ -14,8 +14,8 @@ import { createServer } from 'http'
 import { app } from './app'
 import { setupWebSocket } from './ws/setup'
 import { logStartupInfo } from './utils/startupLogger'
-import { getConnection } from './utils/db'
 import { gracefulShutdown } from './utils/gracefulShutdown'
+import prisma from './prisma'
 import { initializeSentry } from './config/sentry'
 import { createRedisClient, disconnectRedis } from './config/redis'
 import { SERVER } from './config/constants'
@@ -36,8 +36,8 @@ setupWebSocket(httpServer)
 // ✅ Test database connection with retry (startup check)
 ;(async () => {
   try {
-    await getConnection()
-    loggers.db.info('Database connection established')
+    await prisma.$connect()
+    loggers.db.info('Prisma database connection established')
   } catch (err: any) {
     const errorMsg = err.code || err.message || 'Unknown error'
     loggers.db.fatal(
@@ -50,7 +50,38 @@ setupWebSocket(httpServer)
 
 // Jalankan server dengan retry logic untuk handle EADDRINUSE
 const startServer = (retries = 3, delay = 2000) => {
+  const handleError = (err: NodeJS.ErrnoException) => {
+    httpServer.off('error', handleError)
+
+    if (err.code === 'EADDRINUSE' && retries > 0) {
+      loggers.server.warn(
+        { port: PORT, retriesLeft: retries - 1, delay },
+        'Port in use, retrying...',
+      )
+
+      setTimeout(() => {
+        httpServer.close(() => startServer(retries - 1, delay))
+      }, delay)
+      return
+    }
+
+    if (err.code === 'EADDRINUSE') {
+      loggers.server.fatal(
+        { port: PORT },
+        'Port still in use after retries. Please run: pnpm run stop',
+      )
+      process.exit(1)
+    }
+
+    const errorMsg = err.code || err.message || 'Unknown error'
+    loggers.server.fatal({ error: errorMsg }, 'Server error')
+    process.exit(1)
+  }
+
+  httpServer.once('error', handleError)
+
   httpServer.listen(PORT, '0.0.0.0', () => {
+    httpServer.off('error', handleError)
     logStartupInfo(PORT)
     loggers.server.info(
       {
@@ -60,29 +91,6 @@ const startServer = (retries = 3, delay = 2000) => {
       },
       'Phase 2 features initialized',
     )
-  })
-
-  httpServer.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE' && retries > 0) {
-      loggers.server.warn(
-        { port: PORT, retriesLeft: retries - 1, delay },
-        'Port in use, retrying...',
-      )
-      setTimeout(() => {
-        httpServer.close()
-        startServer(retries - 1, delay)
-      }, delay)
-    } else if (err.code === 'EADDRINUSE') {
-      loggers.server.fatal(
-        { port: PORT },
-        'Port still in use after retries. Please run: pnpm run stop',
-      )
-      process.exit(1)
-    } else {
-      const errorMsg = err.code || err.message || 'Unknown error'
-      loggers.server.fatal({ error: errorMsg }, 'Server error')
-      process.exit(1)
-    }
   })
 }
 
