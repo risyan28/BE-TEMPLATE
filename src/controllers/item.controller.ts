@@ -6,7 +6,7 @@
 import { Request, Response } from 'express'
 import { itemService } from '@/services/item.service'
 import { CreateItemSchema, UpdateItemSchema } from '@/schemas/item.schema'
-import { AppError } from '@/middleware/errorHandler'
+import { AppError } from '@/utils/app-error'
 
 export const itemController = {
   /**

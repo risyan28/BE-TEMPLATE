@@ -1,9 +1,8 @@
-// src/ws/poller.ws.ts
 import sql from 'mssql'
 import { getConnection } from '@/utils/db'
 import { POLLING } from '@/config/constants'
+import { loggers } from '@/utils/logger'
 
-// ---- Cursor helper ----
 async function loadCursor(
   pool: sql.ConnectionPool,
   tableName: string,
@@ -35,113 +34,143 @@ async function saveCursor(
     `)
 }
 
-// ---- Reusable CT polling factory (ROOM-aware) ----
+function createPollingCallback<T>({
+  io,
+  room,
+  intervalMs,
+  eventName,
+  tableName,
+  pollingLogic,
+  onChangeDetected,
+  lastVersionRef,
+  retryCountRef,
+  pollingIntervalRef,
+}: {
+  io: any
+  room: string
+  intervalMs: number
+  eventName: string
+  tableName: string
+  pollingLogic: (pool: sql.ConnectionPool) => Promise<T>
+  onChangeDetected?: () => Promise<void>
+  lastVersionRef: { current: number | null }
+  retryCountRef: { current: number }
+  pollingIntervalRef: { current: NodeJS.Timeout | null }
+}) {
+  return async () => {
+    try {
+      const pool = await getConnection()
+      const result = await pool
+        .request()
+        .input('lastVersion', sql.BigInt, lastVersionRef.current ?? 0).query(`
+          SELECT *
+          FROM CHANGETABLE(CHANGES dbo.[${tableName}], @lastVersion) AS c
+        `)
+
+      if (result.recordset.length > 0) {
+        const maxVersion = Math.max(
+          ...result.recordset.map((r) => Number(r.SYS_CHANGE_VERSION)),
+        )
+        await saveCursor(pool, tableName, maxVersion)
+        lastVersionRef.current = maxVersion
+
+        if (onChangeDetected) {
+          await onChangeDetected()
+        }
+
+        const snapshot = await pollingLogic(pool)
+        io.to(room).emit(eventName, snapshot)
+        loggers.ws.info(
+          `Broadcast ${tableName} to room ${room} (changes: ${result.recordset.length}, newVersion: ${maxVersion})`,
+        )
+
+        retryCountRef.current = 0
+      }
+    } catch (err: any) {
+      retryCountRef.current++
+      const errorMsg = err.code || err.message || 'Unknown error'
+      loggers.ws.error(
+        `Polling error for ${tableName} (attempt ${retryCountRef.current}/${POLLING.MAX_RETRIES}): ${errorMsg}`,
+      )
+
+      io.to(room).emit(`${eventName}:error`, {
+        message: 'Database temporarily unavailable',
+        retryCount: retryCountRef.current,
+        maxRetries: POLLING.MAX_RETRIES,
+      })
+
+      if (retryCountRef.current >= POLLING.MAX_RETRIES) {
+        loggers.ws.error(
+          `Max retries exceeded for ${tableName}. Stopping polling for room: ${room}`,
+        )
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current)
+          pollingIntervalRef.current = null
+        }
+
+        io.to(room).emit(`${eventName}:error`, {
+          message: 'Polling stopped due to repeated failures. Please refresh the page.',
+          fatal: true,
+        })
+      }
+    }
+  }
+}
+
 export function createCTPolling<T>({
   tableName,
   eventName,
-  intervalMs = POLLING.INTERVAL_MS, // ✅ Use constant
+  intervalMs = POLLING.INTERVAL_MS,
   pollingLogic,
-  onChangeDetected, // ✅ NEW: callback untuk cache invalidation
+  onChangeDetected,
 }: {
   tableName: string
   eventName: string
   intervalMs?: number
   pollingLogic: (pool: sql.ConnectionPool) => Promise<T>
-  onChangeDetected?: () => Promise<void> // ✅ Optional async callback
+  onChangeDetected?: () => Promise<void>
 }) {
   let pollingInterval: NodeJS.Timeout | null = null
   let lastVersion: number | null = null
   let retryCount = 0
 
   return {
-    // 🔹 Terima io dan room
     start: async (io: any, room: string) => {
       if (pollingInterval) {
-        console.log(
-          `🔁 [WS] Polling for ${tableName} already running (room: ${room})`,
-        )
+        loggers.ws.info(`Polling for ${tableName} already running (room: ${room})`)
         return {
           stop: () => {
-            console.log(
-              `ℹ️ [WS] Stop called on already running polling for ${tableName} (room: ${room})`,
-            )
+            loggers.ws.info(`Stop called on already running polling for ${tableName} (room: ${room})`)
           },
         }
       }
 
       try {
-        console.log(
-          `🚀 [WS] Initializing CT polling for ${tableName} (room: ${room})`,
-        )
+        loggers.ws.info(`Initializing CT polling for ${tableName} (room: ${room})`)
         const pool = await getConnection()
         lastVersion = await loadCursor(pool, tableName)
 
-        pollingInterval = setInterval(async () => {
-          try {
-            const pool = await getConnection()
-            const result = await pool
-              .request()
-              .input('lastVersion', sql.BigInt, lastVersion ?? 0).query(`
-            SELECT * 
-            FROM CHANGETABLE(CHANGES dbo.[${tableName}], @lastVersion) AS c
-          `)
+        const lastVersionRef: { current: number | null } = { current: lastVersion }
+        const retryCountRef: { current: number } = { current: retryCount }
+        const pollingIntervalRef: { current: NodeJS.Timeout | null } = { current: pollingInterval }
 
-            if (result.recordset.length > 0) {
-              const maxVersion = Math.max(
-                ...result.recordset.map((r) => Number(r.SYS_CHANGE_VERSION)),
-              )
-              await saveCursor(pool, tableName, maxVersion)
-              lastVersion = maxVersion
+        pollingInterval = setInterval(
+          createPollingCallback({
+            io,
+            room,
+            intervalMs,
+            eventName,
+            tableName,
+            pollingLogic,
+            onChangeDetected,
+            lastVersionRef,
+            retryCountRef,
+            pollingIntervalRef,
+          }),
+          intervalMs,
+        )
 
-              // ✅ INVALIDATE CACHE sebelum broadcast (ensure consistency)
-              if (onChangeDetected) {
-                await onChangeDetected()
-              }
-
-              const snapshot = await pollingLogic(pool)
-              io.to(room).emit(eventName, snapshot)
-              console.log(
-                `📢 [WS] Broadcast ${tableName} to room ${room} (changes: ${result.recordset.length}, newVersion: ${maxVersion})`,
-              )
-
-              // ✅ Reset retry count on success
-              retryCount = 0
-            }
-          } catch (err: any) {
-            retryCount++
-
-            // ✅ Log only essential error info (not full stack trace)
-            const errorMsg = err.code || err.message || 'Unknown error'
-            console.error(
-              `⚠️ [WS] Polling error for ${tableName} (attempt ${retryCount}/${POLLING.MAX_RETRIES}): ${errorMsg}`,
-            )
-
-            // ✅ Notify clients about DB issue
-            io.to(room).emit(`${eventName}:error`, {
-              message: 'Database temporarily unavailable',
-              retryCount,
-              maxRetries: POLLING.MAX_RETRIES,
-            })
-
-            // ✅ Stop polling if max retries exceeded
-            if (retryCount >= POLLING.MAX_RETRIES) {
-              console.error(
-                `❌ [WS] Max retries exceeded for ${tableName}. Stopping polling for room: ${room}`,
-              )
-              if (pollingInterval) {
-                clearInterval(pollingInterval)
-                pollingInterval = null
-              }
-
-              // ✅ Notify clients that polling stopped
-              io.to(room).emit(`${eventName}:error`, {
-                message:
-                  'Polling stopped due to repeated failures. Please refresh the page.',
-                fatal: true,
-              })
-            }
-          }
-        }, intervalMs)
+        pollingIntervalRef.current = pollingInterval
 
         return {
           stop: () => {
@@ -149,36 +178,28 @@ export function createCTPolling<T>({
               clearInterval(pollingInterval)
               pollingInterval = null
               retryCount = 0
-              console.log(
-                `🛑 [WS] Stopped CT polling for ${tableName} (room: ${room})`,
-              )
+              loggers.ws.info(`Stopped CT polling for ${tableName} (room: ${room})`)
             }
           },
         }
       } catch (initError: any) {
         const errorMsg = initError.code || initError.message || 'Unknown error'
-        console.error(
-          `💥 [WS] Failed to initialize polling for ${tableName} (room: ${room}): ${errorMsg}`,
-        )
+        loggers.ws.error(`Failed to initialize polling for ${tableName} (room: ${room}): ${errorMsg}`)
 
-        // ✅ Notify clients about initialization failure
         io.to(room).emit(`${eventName}:error`, {
-          message:
-            'Failed to initialize real-time updates. Database may be unavailable.',
+          message: 'Failed to initialize real-time updates. Database may be unavailable.',
           error: errorMsg,
           fatal: true,
         })
 
         return {
           stop: () => {
-            console.log(
-              `⚠️ [WS] Dummy stop for failed ${tableName} (room: ${room})`,
-            )
+            loggers.ws.info(`Dummy stop for failed ${tableName} (room: ${room})`)
           },
         }
       }
     },
 
-    pollingLogic, // untuk snapshot awal
+    pollingLogic,
   }
 }

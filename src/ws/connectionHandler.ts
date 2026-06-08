@@ -1,110 +1,103 @@
-// src/ws/connectionHandler.ts
 import { Server, Socket } from 'socket.io'
 import { getConnection } from '@/utils/db'
 import { CORS_DEFAULTS } from '@/config/constants'
+import { loggers } from '@/utils/logger'
 
 let io: Server | null = null
 
-// Simpan instance polling aktif per topik
 const activePollings = new Map<string, { stop: () => void }>()
 
-// Mapping topik ke konfigurasi
-const topicConfig = new Map<string, { eventName: string; pollingModule: any; requiresMSSQL: boolean }>()
+const topicConfig = new Map<string, { eventName: string; pollingModule: any }>()
+
+function getAllowedOrigins(): string | string[] {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim())
+    : ['*']
+  return allowedOrigins.includes('*') ? '*' : allowedOrigins
+}
+
+function getSubscriberCount(topic: string): number {
+  return io!.sockets.adapter.rooms.get(topic)?.size || 0
+}
+
+async function sendSnapshot(socket: Socket, topic: string, config: { eventName: string; pollingModule: any }) {
+  try {
+    const snapshot = await config.pollingModule.pollingLogic(
+      await getConnection(),
+    )
+    socket.emit(config.eventName, snapshot)
+    loggers.ws.info(`Sent initial snapshot to ${socket.id} for topic: ${topic}`)
+  } catch (err: any) {
+    const errorMsg = err.code || err.message || 'Unknown error'
+    loggers.ws.error(`Snapshot error for ${topic} (${socket.id}): ${errorMsg}`)
+    socket.emit(`${config.eventName}:error`, {
+      message: 'Failed to fetch initial data. Database may be unavailable.',
+      error: errorMsg,
+    })
+  }
+}
+
+async function startPollingForTopic(io: Server, topic: string, config: { eventName: string; pollingModule: any }) {
+  try {
+    const pollingResult = await config.pollingModule.start(io, topic)
+    if (pollingResult?.stop) {
+      if (!activePollings.has(topic)) {
+        activePollings.set(topic, pollingResult)
+      }
+    } else {
+      loggers.ws.error(`Invalid polling result for ${topic}`)
+    }
+  } catch (err: any) {
+    const errorMsg = err.code || err.message || 'Unknown error'
+    loggers.ws.error(`Failed to start polling for ${topic}: ${errorMsg}`)
+  }
+}
 
 export function initConnectionHandler(
   server: any,
   pollings: { name: string; module: any; eventName: string; requiresMSSQL?: boolean }[],
 ) {
-  // ✅ CORS Configuration with whitelist for WebSocket
-  const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim())
-    : ['*']
-
   io = new Server(server, {
     cors: {
-      origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+      origin: getAllowedOrigins(),
       credentials: true,
       maxAge: CORS_DEFAULTS.MAX_AGE,
     },
     transports: ['polling', 'websocket'],
   })
 
-  // Daftarkan konfigurasi per topik
-  for (const { name, module, eventName, requiresMSSQL } of pollings) {
-    topicConfig.set(name, { eventName, pollingModule: module, requiresMSSQL: requiresMSSQL ?? false })
+  for (const { name, module, eventName } of pollings) {
+    topicConfig.set(name, { eventName, pollingModule: module })
   }
 
   io.on('connection', async (socket: Socket) => {
-    console.log(`✅ Client connected: ${socket.id}`)
+    loggers.ws.info(`Client connected: ${socket.id}`)
 
-    // 📥 Subscribe ke topik
     socket.on('subscribe', async (topic: string) => {
       const config = topicConfig.get(topic)
       if (!config) {
-        console.warn(`⚠️ Unknown subscription topic: ${topic}`)
+        loggers.ws.warn(`Unknown subscription topic: ${topic}`)
         return
       }
 
       socket.join(topic)
-      console.log(`📥 Client ${socket.id} subscribed to: ${topic}`)
+      loggers.ws.info(`Client ${socket.id} subscribed to: ${topic}`)
 
-      // Jika subscriber pertama, mulai polling
-      const currentSubscribers = io!.sockets.adapter.rooms.get(topic)?.size || 0
-      if (currentSubscribers === 1) {
-        try {
-          const pollingResult = await config.pollingModule.start(io!, topic)
-          if (pollingResult?.stop) {
-            // Hanya simpan jika ini polling baru (belum ada sebelumnya)
-            if (!activePollings.has(topic)) {
-              activePollings.set(topic, pollingResult)
-            }
-          } else {
-            console.error(`[WS] Invalid polling result for ${topic}`)
-          }
-        } catch (err: any) {
-          const errorMsg = err.code || err.message || 'Unknown error'
-          console.error(`❌ Failed to start polling for ${topic}: ${errorMsg}`)
-        }
+      if (getSubscriberCount(topic) === 1) {
+        await startPollingForTopic(io!, topic, config)
       } else {
-        // ✅ ENHANCEMENT: Jika bukan subscriber pertama (polling sudah jalan),
-        // tetap kirim snapshot FRESH untuk client yang baru subscribe
-        console.log(
-          `🔄 Client ${socket.id} joining existing room ${topic} (${currentSubscribers} subscribers)`,
+        loggers.ws.info(
+          `Client ${socket.id} joining existing room ${topic} (${getSubscriberCount(topic)} subscribers)`,
         )
       }
 
-      // Kirim snapshot TERBARU ke client yang baru subscribe
-      try {
-        let pool: any = null
-        if (config.requiresMSSQL) {
-          try {
-            pool = await getConnection()
-          } catch {
-            // MSSQL unavailable
-          }
-        }
-        const snapshot = await config.pollingModule.pollingLogic(pool)
-        socket.emit(config.eventName, snapshot)
-        console.log(
-          `📤 Sent initial snapshot to ${socket.id} for topic: ${topic}`,
-        )
-      } catch (err: any) {
-        const errorMsg = err.code || err.message || 'Unknown error'
-        console.error(
-          `⚠️ [WS] Snapshot error for ${topic} (${socket.id}): ${errorMsg}`,
-        )
-        socket.emit(`${config.eventName}:error`, {
-          message: 'Failed to fetch initial data. Database may be unavailable.',
-          error: errorMsg,
-        })
-      }
+      await sendSnapshot(socket, topic, config)
     })
 
-    // ✅ NEW: Manual sync request untuk force refresh data
     socket.on('sync', async (topic: string) => {
       const config = topicConfig.get(topic)
       if (!config) {
-        console.warn(`⚠️ Unknown sync topic: ${topic}`)
+        loggers.ws.warn(`Unknown sync topic: ${topic}`)
         return
       }
 
@@ -119,12 +112,10 @@ export function initConnectionHandler(
         }
         const snapshot = await config.pollingModule.pollingLogic(pool)
         socket.emit(config.eventName, snapshot)
-        console.log(`🔄 Manual sync sent to ${socket.id} for topic: ${topic}`)
+        loggers.ws.info(`Manual sync sent to ${socket.id} for topic: ${topic}`)
       } catch (err: any) {
         const errorMsg = err.code || err.message || 'Unknown error'
-        console.error(
-          `⚠️ [WS] Sync error for ${topic} (${socket.id}): ${errorMsg}`,
-        )
+        loggers.ws.error(`Sync error for ${topic} (${socket.id}): ${errorMsg}`)
         socket.emit(`${config.eventName}:error`, {
           message: 'Failed to sync data. Database may be unavailable.',
           error: errorMsg,
@@ -132,19 +123,11 @@ export function initConnectionHandler(
       }
     })
 
-    // � Join user-specific room untuk badge update via Socket.IO
-    // Frontend memanggil: socket.emit('join', `user:${userId}`)
-    socket.on('join', (room: string) => {
-      socket.join(room)
-    })
-
-    // �📤 Unsubscribe
     socket.on('unsubscribe', (topic: string) => {
       socket.leave(topic)
-      console.log(`📤 Client ${socket.id} unsubscribed from: ${topic}`)
+      loggers.ws.info(`Client ${socket.id} unsubscribed from: ${topic}`)
 
-      const currentSubscribers = io!.sockets.adapter.rooms.get(topic)?.size || 0
-      if (currentSubscribers === 0) {
+      if (getSubscriberCount(topic) === 0) {
         const polling = activePollings.get(topic)
         if (polling) {
           polling.stop()
@@ -153,9 +136,8 @@ export function initConnectionHandler(
       }
     })
 
-    socket.on('disconnect', (reason) => {
-      // Normal on mobile — browser suspends WS when app goes to background
-      console.log(`👋 Client disconnected: ${socket.id} (${reason})`)
+    socket.on('disconnect', () => {
+      loggers.ws.info(`Client disconnected: ${socket.id}`)
     })
   })
 
@@ -163,6 +145,6 @@ export function initConnectionHandler(
 }
 
 export function getIO(): Server {
-  if (!io) throw new Error('⚠️ Socket.IO not initialized!')
+  if (!io) throw new Error('Socket.IO not initialized!')
   return io
 }

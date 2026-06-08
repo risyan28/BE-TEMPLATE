@@ -1,20 +1,6 @@
-// src/middleware/errorHandler.ts
 import { Request, Response, NextFunction } from 'express'
 import { ZodError } from 'zod'
-
-/**
- * Custom error class for application-specific errors
- */
-export class AppError extends Error {
-  constructor(
-    public statusCode: number,
-    public message: string,
-    public isOperational = true,
-  ) {
-    super(message)
-    Object.setPrototypeOf(this, AppError.prototype)
-  }
-}
+import { AppError } from '@/utils/app-error'
 
 /**
  * Centralized error handling middleware
