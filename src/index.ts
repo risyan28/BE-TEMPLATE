@@ -1,25 +1,23 @@
-// src/index.ts
-// ⚠️ IMPORTANT: OpenTelemetry must be initialized FIRST before any other imports
 import dotenv from 'dotenv'
-dotenv.config() // Load env vars before OpenTelemetry
+dotenv.config()
+
+import 'module-alias/register'
 
 import {
   initializeOpenTelemetry,
   shutdownOpenTelemetry,
-} from './config/telemetry'
-initializeOpenTelemetry() // Must run before app imports
-
-import 'module-alias/register'
+} from '@/shared/config/telemetry'
+initializeOpenTelemetry()
 import { createServer } from 'http'
 import { app } from './app'
 import { setupWebSocket } from './ws/setup'
-import { logStartupInfo } from './utils/startupLogger'
-import { gracefulShutdown } from './utils/gracefulShutdown'
-import prisma from './prisma'
-import { initializeSentry } from './config/sentry'
-import { createRedisClient, disconnectRedis } from './config/redis'
-import { SERVER } from './config/constants'
-import { loggers } from './utils/logger'
+import { logStartupInfo } from '@/shared/lib/startupLogger'
+import { gracefulShutdown } from '@/shared/lib/gracefulShutdown'
+import prisma from '@/shared/lib/prisma'
+import { initializeSentry } from '@/shared/config/sentry'
+import { createRedisClient, disconnectRedis } from '@/shared/config/redis'
+import { SERVER } from '@/shared/config/constants'
+import { loggers } from '@/shared/lib/logger'
 
 const PORT = Number(process.env.PORT) || SERVER.DEFAULT_PORT
 const httpServer = createServer(app)
@@ -33,18 +31,17 @@ createRedisClient()
 // Setup WebSocket
 setupWebSocket(httpServer)
 
-// ✅ Test database connection with retry (startup check)
+// optional: test database connection (non-blocking — no exit on failure)
 ;(async () => {
   try {
     await prisma.$connect()
     loggers.db.info('Prisma database connection established')
   } catch (err: any) {
     const errorMsg = err.code || err.message || 'Unknown error'
-    loggers.db.fatal(
+    loggers.db.warn(
       { error: errorMsg },
-      'Failed to connect to database after retries',
+      'Database unavailable — app will run with limited functionality',
     )
-    process.exit(1)
   }
 })()
 

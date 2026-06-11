@@ -1,13 +1,19 @@
 import { Server, Socket } from 'socket.io'
-import { getConnection } from '@/utils/db'
-import { CORS_DEFAULTS } from '@/config/constants'
-import { loggers } from '@/utils/logger'
+import { getConnection } from '@/shared/lib/db'
+import { CORS_DEFAULTS } from '@/shared/config/constants'
+import { loggers } from '@/shared/lib/logger'
 
 let io: Server | null = null
 
 const activePollings = new Map<string, { stop: () => void }>()
 
-const topicConfig = new Map<string, { eventName: string; pollingModule: any }>()
+interface TopicConfig {
+  eventName: string
+  pollingModule: any
+  requiresMSSQL?: boolean
+}
+
+const topicConfig = new Map<string, TopicConfig>()
 
 function getAllowedOrigins(): string | string[] {
   const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -20,7 +26,7 @@ function getSubscriberCount(topic: string): number {
   return io!.sockets.adapter.rooms.get(topic)?.size || 0
 }
 
-async function sendSnapshot(socket: Socket, topic: string, config: { eventName: string; pollingModule: any }) {
+async function sendSnapshot(socket: Socket, topic: string, config: TopicConfig) {
   try {
     const snapshot = await config.pollingModule.pollingLogic(
       await getConnection(),
@@ -37,7 +43,7 @@ async function sendSnapshot(socket: Socket, topic: string, config: { eventName: 
   }
 }
 
-async function startPollingForTopic(io: Server, topic: string, config: { eventName: string; pollingModule: any }) {
+async function startPollingForTopic(io: Server, topic: string, config: TopicConfig) {
   try {
     const pollingResult = await config.pollingModule.start(io, topic)
     if (pollingResult?.stop) {

@@ -1,168 +1,33 @@
 generator client {
   provider      = "prisma-client-js"
-  // native           = local dev (Windows/Mac)
-  // rhel-openssl-*   = Hostinger Business (CloudLinux / RHEL-based)
-  // debian-openssl-* = Ubuntu VPS / GitHub Actions CI runner
-  // linux-musl-*     = Alpine Linux / Docker musl
   binaryTargets = ["native", "rhel-openssl-3.0.x", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "mysql" // change to "sqlserver" for MSSQL
   url      = env("DATABASE_URL")
-  // Niagahoster shared : gunakan MySQL creds dari cPanel
-  // Niagahoster VPS    : mysql://root:password@localhost:3306/qc_assistance
 }
 
-// ─── Enums ────────────────────────────────────────────────────────────────────
-
-enum QuotationStatus {
-  DRAFT
-  PENDING_SALES_REVIEW
-  PENDING_MANAGER_REVIEW
-  APPROVED
-  REJECTED
-  REVISION
-}
-
-// ─── Models ───────────────────────────────────────────────────────────────────
+// ─── Example Models ──────────────────────────────────────
+// Copy and modify these for your project
 
 model User {
-  id           Int       @id @default(autoincrement())
-  username     String    @unique @db.VarChar(100)
-  email        String    @unique @db.VarChar(191)
-  passwordHash String    @db.VarChar(255)
-  positionId   Int?
-  position     Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
-  signatureUrl String?   @db.VarChar(500)
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  pushSubscriptions      PushSubscription[]
-  notificationLogs       NotificationLog[]
-  quotationsAsAssistance Quotation[]        @relation("QuotationAssistance")
-  quotationsAsSalesPic   Quotation[]        @relation("QuotationSalesPic")
-  quotationsAsManager    Quotation[]        @relation("QuotationManager")
-  workGroupAsAssistance  WorkGroup[]        @relation("WGAssistance")
-  workGroupAsSalesPic    WorkGroup[]        @relation("WGSalesPic")
-  workGroupAsManager     WorkGroup[]        @relation("WGManager")
-
-  @@index([positionId])
-  @@map("TB_M_USER")
-}
-
-/// Mapping assistance -> Sales PIC -> Manager dalam satu grup kerja.
-/// Ini yang menentukan ke siapa notifikasi dikirim.
-model WorkGroup {
-  id           Int    @id @default(autoincrement())
-  name         String @db.VarChar(100)
-  assistanceId Int
-  salesPicId   Int
-  managerId    Int
-
-  assistance User @relation("WGAssistance", fields: [assistanceId], references: [id])
-  salesPic   User @relation("WGSalesPic",   fields: [salesPicId],   references: [id])
-  manager    User @relation("WGManager",    fields: [managerId],    references: [id])
-
-  @@unique([assistanceId, salesPicId, managerId])
-  @@map("TB_M_WORK_GROUP")
-}
-
-/// Push subscription per device per user.
-/// Satu user bisa punya beberapa subscription (laptop + HP).
-/// Satu device bisa dipake beberapa user (shared device).
-model PushSubscription {
   id        Int      @id @default(autoincrement())
-  endpoint  String   @db.VarChar(500)
-  keys      Json
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, endpoint])
-  @@index([userId])
-  @@map("TB_M_PUSH_SUBSCRIPTION")
-}
-
-/// History semua notifikasi — sumber data bell icon / notification center.
-model NotificationLog {
-  id          Int        @id @default(autoincrement())
-  userId      Int
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String     @db.VarChar(255)
-  body        String     @db.Text
-  url         String     @db.VarChar(500)
-  tag         String?    @db.VarChar(100)
-  isRead      Boolean    @default(false)
-  quotationId Int?
-  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
-  createdAt   DateTime   @default(now())
-
-  @@index([userId, isRead])
-  @@index([userId, createdAt])
-  @@map("TB_H_NOTIFICATION_LOG")
-}
-
-model Quotation {
-  id     Int             @id @default(autoincrement())
-  status QuotationStatus @default(DRAFT)
-
-  quotationNumber  String?   @unique @db.VarChar(50)
-  supplierQuoteNo  String?   @db.VarChar(100)
-  customerName     String?   @db.VarChar(191)
-  customerId      Int?
-  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  quotationDate   DateTime?
-  priority        String?   @db.VarChar(20)
-  totalValue      String?   @db.VarChar(50)
-  notes           String?   @db.Text
-  attachments     Json?
-  revisionNote    String?   @db.Text
-  sentToCustomerAt DateTime?
-
-  assistanceId Int
-  salesPicId   Int
-  managerId    Int?
-
-  assistance User  @relation("QuotationAssistance", fields: [assistanceId], references: [id])
-  salesPic   User  @relation("QuotationSalesPic",   fields: [salesPicId],   references: [id])
-  manager    User? @relation("QuotationManager",    fields: [managerId],    references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  notificationLogs NotificationLog[]
-
-  @@index([status])
-  @@index([customerId])
-  @@map("TB_R_QUOTATION")
-}
-
-/// Master data customer — sumber data dropdown pada form quotation.
-model Customer {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique @db.VarChar(255)
+  username  String   @unique
+  email     String   @unique
+  password  String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  quotations Quotation[]
-
-  @@map("TB_M_CUSTOMER")
-  @@index([isActive])
+  profiles Profile[]
 }
 
-/// Master position — Assistance, Sales PIC, Manager, dst.
-/// Tambah position baru cukup INSERT ke tabel ini, tanpa perlu migration.
-model Position {
-  id       Int     @id @default(autoincrement())
-  name     String  @unique @db.VarChar(100)
-  isActive Boolean @default(true)
-
-  users User[]
-
-  @@map("TB_M_POSITION")
+model Profile {
+  id        Int    @id @default(autoincrement())
+  fullName  String
+  avatarUrl String?
+  phone     String?
+  userId    Int    @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

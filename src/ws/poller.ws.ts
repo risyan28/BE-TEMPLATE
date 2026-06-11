@@ -1,7 +1,7 @@
 import sql from 'mssql'
-import { getConnection } from '@/utils/db'
-import { POLLING } from '@/config/constants'
-import { loggers } from '@/utils/logger'
+import { getConnection } from '@/shared/lib/db'
+import { POLLING } from '@/shared/config/constants'
+import { loggers } from '@/shared/lib/logger'
 
 async function loadCursor(
   pool: sql.ConnectionPool,
@@ -69,7 +69,7 @@ function createPollingCallback<T>({
 
       if (result.recordset.length > 0) {
         const maxVersion = Math.max(
-          ...result.recordset.map((r) => Number(r.SYS_CHANGE_VERSION)),
+          ...result.recordset.map((r: any) => Number(r.SYS_CHANGE_VERSION)),
         )
         await saveCursor(pool, tableName, maxVersion)
         lastVersionRef.current = maxVersion
